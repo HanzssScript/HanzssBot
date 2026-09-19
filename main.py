@@ -43,7 +43,7 @@ async def on_message(message):
         return
 
     # Hanya aktif di channel "chat-ai"
-    if message.channel.name != "🤖｜chat-ai":
+    if message.channel.name != "🤖│chat-ai":
         return
 
     print("Pesan:", message.content)
