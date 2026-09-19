@@ -40,14 +40,31 @@ untuk emot yang sedang mau curhat seperti:
 🥰, 😊, 🫠, ❤️, 😞, 🫂.
 """
 
+# Nama channel tempat bot AKTIF membalas otomatis (tanpa mention)
+CHANNELS_AKTIF = ["🤖│chat-ai"]
+
+
+def daftar_channel(guild):
+    daftar = []
+    for ch in guild.text_channels:
+        daftar.append(f"- {ch.name} : <#{ch.id}>")
+    return "\n".join(daftar)
+
+
+@bot.event
+async def on_ready():
+    print("=" * 40)
+    print(f"Bot online sebagai {bot.user}")
+    print("=" * 40)
+
+
 @bot.event
 async def on_message(message):
 
     if message.author.bot:
         return
 
-    # Hanya aktif di channel "chat-ai"
-    if message.channel.name != "🤖│chat-ai":
+    if message.channel.name not in CHANNELS_AKTIF:
         return
 
     print("Pesan:", message.content)
@@ -56,12 +73,24 @@ async def on_message(message):
 
     if pertanyaan == "":
         return
+
     try:
         await message.channel.typing()
+
+        info_channel = daftar_channel(message.guild)
+
+        system_lengkap = SYSTEM_PROMPT + f"""
+
+Berikut daftar channel yang ada di server ini beserta cara mention-nya:
+{info_channel}
+
+Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key delta, dll), jawab dengan menyebutkan channel yang paling sesuai memakai format mention persis seperti di atas (<#angka>), jangan menulis ulang nama channel biasa.
+"""
+
         jawaban = ai.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_lengkap},
                 {"role": "user", "content": pertanyaan}
             ],
             temperature=0.8,
