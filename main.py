@@ -37,26 +37,21 @@ Paham:
 """
 
 @bot.event
-async def on_ready():
-    print("=" * 40)
-    print(f"Bot online sebagai {bot.user}")
-    print("=" * 40)
-
-@bot.event
 async def on_message(message):
+
     if message.author.bot:
         return
-    print("Pesan:", message.content)
-    if bot.user not in message.mentions:
+
+    # Hanya aktif di channel "chat-ai"
+    if message.channel.name != "chat-ai":
         return
-    pertanyaan = (
-        message.content
-        .replace(f"<@{bot.user.id}>", "")
-        .replace(f"<@!{bot.user.id}>", "")
-        .strip()
-    )
+
+    print("Pesan:", message.content)
+
+    pertanyaan = message.content.strip()
+
     if pertanyaan == "":
-        pertanyaan = "Halo"
+        return
     try:
         await message.channel.typing()
         jawaban = ai.chat.completions.create(
