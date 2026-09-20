@@ -1,17 +1,46 @@
 import discord
 import base64
 import os
-from groq import Groq
+import logging
+import traceback
+from groq import Groq, APIError, APIConnectionError, APITimeoutError, RateLimitError
+
+# ==========================================================
+# LOGGING - biar error asli kelihatan lengkap di console/log
+# ==========================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("HanzBot")
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-ai = Groq(api_key=GROQ_API_KEY)
+# timeout biar bot ga nge-hang lama kalau Groq lagi lambat/down
+ai = Groq(api_key=GROQ_API_KEY, timeout=30.0, max_retries=2)
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = discord.Client(intents=intents)
+
+DISCORD_MAX_LEN = 2000
+
+
+async def kirim_balasan(message, teks):
+    """Kirim balasan, otomatis dipotong kalau kepanjangan buat Discord."""
+    if not teks:
+        teks = "Hmm, aku ga dapet jawaban dari AI-nya bang, coba tanya ulang ya. 😅"
+    potongan = [teks[i:i + DISCORD_MAX_LEN - 50] for i in range(0, len(teks), DISCORD_MAX_LEN - 50)]
+    try:
+        await message.reply(potongan[0])
+        for lanjut in potongan[1:]:
+            await message.channel.send(lanjut)
+    except discord.Forbidden:
+        logger.error("Ga punya izin reply/send di channel %s", message.channel)
+    except discord.HTTPException as e:
+        logger.error("Gagal kirim pesan ke Discord: %s", e)
 
 # ==========================================================
 # STATE MODE (per server / guild)
@@ -155,6 +184,11 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # Bot ini didesain buat server (guild), bukan DM.
+    # Tanpa guard ini, chat DM ke bot bakal crash diam-diam (guild None) dan ga ke-reply.
+    if message.guild is None:
+        return
+
     if message.channel.name not in CHANNELS_AKTIF:
         return
 
@@ -245,10 +279,30 @@ async def on_message(message):
                 max_tokens=250,
             )
 
-        await message.reply(jawaban.choices[0].message.content)
-    except Exception as e:
-        print(e)
-        await message.reply(f"Terjadi error:\n```{e}```")
+        isi_jawaban = jawaban.choices[0].message.content if jawaban.choices else None
+        if not isi_jawaban:
+            alasan = jawaban.choices[0].finish_reason if jawaban.choices else "tidak ada choices"
+            logger.warning("Jawaban AI kosong. finish_reason=%s, model=%s", alasan, jawaban.model)
+        await kirim_balasan(message, isi_jawaban)
+
+    except RateLimitError:
+        logger.warning("Kena rate limit Groq.")
+        await kirim_balasan(message, "Lagi banyak yang chat bang, bentar lagi ya, kena limit dulu nih. 🗿")
+    except (APITimeoutError, APIConnectionError) as e:
+        logger.error("Groq timeout/connection error: %s", e)
+        await kirim_balasan(message, "Koneksi ke otak AI-nya lagi lemot/putus, coba lagi bentar ya. 🥲")
+    except APIError as e:
+        logger.error("Groq API error: %s", e)
+        await kirim_balasan(message, "AI-nya lagi error di server, coba lagi nanti ya bang.")
+    except Exception:
+        # log traceback LENGKAP ke console, biar ketauan akar masalahnya
+        logger.error("Error tak terduga di on_message:\n%s", traceback.format_exc())
+        await kirim_balasan(message, "Ups, ada error di sistemku. Udah dicatat, coba tanya ulang ya. 🙏")
+
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    logger.error("Error di event %s:\n%s", event, traceback.format_exc())
+
 
 bot.run(TOKEN)
-     
