@@ -95,6 +95,45 @@ Berikut daftar channel yang ada di server ini beserta cara mention-nya:
 Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key delta, dll), jawab dengan menyebutkan channel yang paling sesuai memakai format mention persis seperti di atas (<#angka>), jangan menulis ulang nama channel biasa.
 """
 
+        pertanyaan_dengan_username = f"[username: {message.author.name}] {pertanyaan}"
+
+        jawaban = ai.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[
+                {"role": "system", "content": system_lengkap},
+                {"role": "user", "content": pertanyaan_dengan_username}
+            ],
+            temperature=0.8,
+            max_tokens=250
+        )
+        await message.reply(jawaban.choices[0].message.content)
+    except Exception as e:
+        print(e)
+        await message.reply(f"Terjadi error:\n```{e}```")
+
+bot.run(TOKEN)    if message.channel.name not in CHANNELS_AKTIF:
+        return
+
+    print("Pesan:", message.content)
+
+    pertanyaan = message.content.strip()
+
+    if pertanyaan == "":
+        return
+
+    try:
+        await message.channel.typing()
+
+        info_channel = daftar_channel(message.guild)
+
+        system_lengkap = SYSTEM_PROMPT + f"""
+
+Berikut daftar channel yang ada di server ini beserta cara mention-nya:
+{info_channel}
+
+Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key delta, dll), jawab dengan menyebutkan channel yang paling sesuai memakai format mention persis seperti di atas (<#angka>), jangan menulis ulang nama channel biasa.
+"""
+
         jawaban = ai.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=[
