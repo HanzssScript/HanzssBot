@@ -101,7 +101,7 @@ Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key 
                 {"role": "user", "content": pertanyaan}
             ],
             temperature=0.8,
-            max_tokens=500
+            max_tokens=250
         )
         await message.reply(jawaban.choices[0].message.content)
     except Exception as e:
