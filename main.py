@@ -1,8 +1,11 @@
 import discord
+import asyncio
 import base64
 import os
+import re
 import logging
 import traceback
+import aiohttp
 from groq import Groq, APIError, APIConnectionError, APITimeoutError, RateLimitError
 
 # ==========================================================
@@ -25,18 +28,232 @@ intents.message_content = True
 
 bot = discord.Client(intents=intents)
 
+# Session HTTP dipakai bareng buat fetch metadata link (dibuat pas bot ready)
+http_session: aiohttp.ClientSession | None = None
+
 DISCORD_MAX_LEN = 2000
 
+# ==========================================================
+# TAMPILAN BALASAN: embed berwarna, pagination, efek ngetik
+# ==========================================================
+MODE_COLORS = {
+    "kalem": 0x3498DB,   # biru - tenang
+    "tengil": 0xE67E22,  # oranye - nyeletuk
+    "normal": 0x2ECC71,  # hijau - default
+}
 
-async def kirim_balasan(message, teks):
-    """Kirim balasan, otomatis dipotong kalau kepanjangan buat Discord."""
+EMBED_PAGE_LEN = 3800     # aman di bawah limit embed description (4096)
+TYPING_STEPS_MAX = 8      # jumlah langkah "ketikan" (dibatasi biar ga kena rate limit edit)
+TYPING_DELAY = 0.35       # jeda antar langkah (detik)
+TYPING_MIN_LEN = 40       # di bawah panjang ini, efek ngetik dilewati (percuma)
+
+# --- Link preview (embed links) ---
+URL_REGEX = re.compile(r'https?://[^\s<>"\')\]]+')
+MAX_LINK_PREVIEW = 2          # maksimal berapa link yang dibikinin card per jawaban
+LINK_FETCH_TIMEOUT = 5        # detik per link
+LINK_FETCH_MAX_BYTES = 200_000  # jangan download halaman gede-gede, cukup buat cari meta tag di <head>
+
+_TAG_REGEX = re.compile(r'<meta\s+([^>]+)>', re.IGNORECASE)
+_ATTR_REGEX = re.compile(r'''([\w:-]+)\s*=\s*"([^"]*)"|([\w:-]+)\s*=\s*'([^']*)\'''')
+_TITLE_REGEX = re.compile(r'<title[^>]*>([^<]*)</title>', re.IGNORECASE)
+
+
+def cari_url(teks):
+    """Ambil URL unik dari teks, urut kemunculan, maksimal MAX_LINK_PREVIEW."""
+    ditemukan = []
+    for url in URL_REGEX.findall(teks or ""):
+        url_bersih = url.rstrip(").,!?")
+        if url_bersih not in ditemukan:
+            ditemukan.append(url_bersih)
+        if len(ditemukan) >= MAX_LINK_PREVIEW:
+            break
+    return ditemukan
+
+
+def parse_og_tags(html):
+    """Ambil title/description/image/site_name dari meta tag OpenGraph/Twitter Card secara ringan (tanpa bs4)."""
+    og = {}
+    judul = _TITLE_REGEX.search(html)
+    if judul:
+        og["title"] = judul.group(1).strip()
+
+    for tag in _TAG_REGEX.findall(html):
+        attrs = {}
+        for m in _ATTR_REGEX.finditer(tag):
+            if m.group(1):
+                attrs[m.group(1).lower()] = m.group(2)
+            else:
+                attrs[m.group(3).lower()] = m.group(4)
+        key = (attrs.get("property") or attrs.get("name") or "").lower()
+        content = attrs.get("content")
+        if not key or not content:
+            continue
+        if key in ("og:title", "twitter:title"):
+            og["title"] = content
+        elif key in ("og:description", "description", "twitter:description") and "description" not in og:
+            og["description"] = content
+        elif key in ("og:image", "twitter:image"):
+            og["image"] = content
+        elif key == "og:site_name":
+            og["site_name"] = content
+    return og
+
+
+async def ambil_metadata_link(url):
+    """Fetch halaman & parse metadata OG-nya. Return None kalau gagal/timeout/bukan HTML."""
+    global http_session
+    if http_session is None:
+        return None
+    try:
+        async with http_session.get(
+            url,
+            timeout=aiohttp.ClientTimeout(total=LINK_FETCH_TIMEOUT),
+            headers={"User-Agent": "Mozilla/5.0 (compatible; HanzBot/1.0)"},
+            allow_redirects=True,
+        ) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            if resp.status != 200 or "text/html" not in content_type:
+                return None
+            raw = await resp.content.read(LINK_FETCH_MAX_BYTES)
+            html = raw.decode(errors="ignore")
+            return parse_og_tags(html)
+    except Exception:
+        return None
+
+
+def buat_embed_link(url, meta):
+    embed = discord.Embed(
+        title=(meta.get("title") or url)[:256],
+        url=url,
+        description=(meta.get("description") or "")[:300],
+        color=discord.Color.blurple(),
+    )
+    if meta.get("site_name"):
+        embed.set_footer(text=meta["site_name"])
+    if meta.get("image"):
+        embed.set_image(url=meta["image"])
+    return embed
+
+
+async def buat_semua_embed_link(teks):
+    """Cari URL di teks, fetch metadata-nya bareng-bareng (concurrent), balikin list embed link card."""
+    urls = cari_url(teks)
+    if not urls:
+        return []
+    hasil_meta = await asyncio.gather(*(ambil_metadata_link(u) for u in urls))
+    embeds = []
+    for url, meta in zip(urls, hasil_meta):
+        if meta:
+            embeds.append(buat_embed_link(url, meta))
+    return embeds
+
+
+def get_mode_name(guild_id):
+    """Nama mode aktif buat guild ini: 'kalem', 'tengil', atau 'normal'."""
+    mode = get_mode(guild_id)
+    if mode["kalem"]:
+        return "kalem"
+    if mode["tengil"]:
+        return "tengil"
+    return "normal"
+
+
+class PaginatorView(discord.ui.View):
+    """Tombol Prev/Next buat jawaban panjang. Tiap halaman = list embed (embed jawaban + embed link card)."""
+
+    def __init__(self, pages, author_id):
+        super().__init__(timeout=180)
+        self.pages = pages  # list[list[discord.Embed]]
+        self.index = 0
+        self.author_id = author_id
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.tombol_prev.disabled = self.index == 0
+        self.tombol_next.disabled = self.index >= len(self.pages) - 1
+
+    async def _cek_pemilik(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Ini bukan buat kamu bang 😅", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
+    async def tombol_prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._cek_pemilik(interaction):
+            return
+        self.index = max(0, self.index - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embeds=self.pages[self.index], view=self)
+
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
+    async def tombol_next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._cek_pemilik(interaction):
+            return
+        self.index = min(len(self.pages) - 1, self.index + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(embeds=self.pages[self.index], view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+async def kirim_balasan(message, teks, mode_name="normal"):
+    """Kirim balasan sebagai embed berwarna sesuai mode, dengan efek ngetik bertahap
+    di halaman pertama, dan tombol pagination kalau jawabannya kepanjangan."""
     if not teks:
         teks = "Hmm, aku ga dapet jawaban dari AI-nya bang, coba tanya ulang ya. 😅"
-    potongan = [teks[i:i + DISCORD_MAX_LEN - 50] for i in range(0, len(teks), DISCORD_MAX_LEN - 50)]
+
+    warna = MODE_COLORS.get(mode_name, MODE_COLORS["normal"])
+    halaman_teks = [teks[i:i + EMBED_PAGE_LEN] for i in range(0, len(teks), EMBED_PAGE_LEN)] or [teks]
+    total_halaman = len(halaman_teks)
+
+    def buat_embed(index, konten_tampil):
+        embed = discord.Embed(description=konten_tampil or "‌", color=warna)
+        embed.set_author(name="HanzBot")
+        if total_halaman > 1:
+            embed.set_footer(text=f"Halaman {index + 1}/{total_halaman}")
+        return embed
+
     try:
-        await message.reply(potongan[0])
-        for lanjut in potongan[1:]:
-            await message.channel.send(lanjut)
+        konten_pertama = halaman_teks[0]
+
+        # Mulai fetch metadata link (kalau ada URL di jawaban) BARENGAN sama animasi ngetik,
+        # biar ga nambah waktu tunggu ekstra.
+        tugas_link = asyncio.create_task(buat_semua_embed_link(teks))
+
+        # --- kirim awal (kosong/kursor) lalu animasikan efek ngetik ---
+        sent = await message.reply(embeds=[buat_embed(0, "▌")])
+
+        if len(konten_pertama) >= TYPING_MIN_LEN:
+            panjang = len(konten_pertama)
+            jumlah_langkah = min(TYPING_STEPS_MAX, max(2, panjang // 20))
+            ukuran_langkah = max(1, panjang // jumlah_langkah)
+            for i in range(ukuran_langkah, panjang, ukuran_langkah):
+                try:
+                    await sent.edit(embeds=[buat_embed(0, konten_pertama[:i] + "▌")])
+                except discord.HTTPException:
+                    break
+                await asyncio.sleep(TYPING_DELAY)
+
+        # Tunggu hasil fetch link (kalau belum selesai), maks LINK_FETCH_TIMEOUT detik lagi
+        try:
+            embed_link = await tugas_link
+        except Exception:
+            embed_link = []
+
+        # --- susun tiap halaman: embed jawaban + (khusus halaman pertama) embed link card ---
+        semua_halaman = []
+        for idx, hal in enumerate(halaman_teks):
+            embeds_halaman = [buat_embed(idx, hal)]
+            if idx == 0 and embed_link:
+                embeds_halaman.extend(embed_link)
+            semua_halaman.append(embeds_halaman)
+
+        view = PaginatorView(semua_halaman, author_id=message.author.id) if total_halaman > 1 else None
+        await sent.edit(embeds=semua_halaman[0], view=view)
+
     except discord.Forbidden:
         logger.error("Ga punya izin reply/send di channel %s", message.channel)
     except discord.HTTPException as e:
@@ -217,6 +434,9 @@ def minta_ocr(teks):
 
 @bot.event
 async def on_ready():
+    global http_session
+    if http_session is None:
+        http_session = aiohttp.ClientSession()
     print("=" * 40)
     print(f"Bot online sebagai {bot.user}")
     print("=" * 40)
@@ -250,131 +470,4 @@ async def on_message(message):
             mode["kalem"] = True
             mode["tengil"] = False
             await message.reply("Baik, mode kalem sudah aktif. Saya akan berbicara dengan sopan dan santun kepada semua pengguna. 🙏")
-        elif perintah == "kalem off":
-            mode["kalem"] = False
-            await message.reply("Mode kalem sudah dimatikan. 🙂")
-        elif perintah == "tengil on":
-            mode["tengil"] = True
-            mode["kalem"] = False
-            await message.reply("Gas, mode tengil nyala bang, tapi tetap santun ya wkwk 🗿")
-        elif perintah == "tengil off":
-            mode["tengil"] = False
-            await message.reply("Siap, mode tengil dimatikan. 🙂")
-        return
-
-    # ------------------------------------------------------
-    # Cek gambar (untuk fitur OCR / analisis gambar)
-    # ------------------------------------------------------
-    gambar_attachment = None
-    for att in message.attachments:
-        if att.content_type and att.content_type.startswith("image/"):
-            gambar_attachment = att
-            break
-
-    if pertanyaan == "" and gambar_attachment is None:
-        return
-
-    try:
-        await message.channel.typing()
-
-        system_lengkap = build_system_prompt(message.guild, guild_id)
-        pertanyaan_dengan_username = f"[username: {message.author.name}] {pertanyaan}"
-
-        if gambar_attachment is not None:
-            # Ada gambar terlampir -> pakai model vision
-            image_bytes = await gambar_attachment.read()
-            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-            mime_type = gambar_attachment.content_type
-
-            if minta_ocr(pertanyaan) or pertanyaan == "":
-                instruksi_gambar = (
-                    "Tolong ambil dan tuliskan ulang semua teks yang ada di gambar ini "
-                    "persis seperti aslinya, tanpa tambahan komentar lain kecuali diminta. "
-                    "Jika ada instruksi tambahan dari pengguna, ikuti bahasa instruksi tersebut untuk komentar apa pun."
-                )
-            else:
-                instruksi_gambar = pertanyaan
-
-            jawaban = ai.chat.completions.create(
-                model=VISION_MODEL,
-                messages=[
-                    {"role": "system", "content": system_lengkap},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": f"[username: {message.author.name}] {instruksi_gambar}"},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
-                            },
-                        ],
-                    },
-                ],
-                temperature=0.6,
-                max_tokens=700,
-            )
-        else:
-            jawaban = ai.chat.completions.create(
-                model=TEXT_MODEL,
-                messages=[
-                    {"role": "system", "content": system_lengkap},
-                    {"role": "user", "content": pertanyaan_dengan_username},
-                ],
-                temperature=0.7,
-                max_tokens=900,
-                reasoning_effort="low",
-            )
-
-        isi_jawaban = jawaban.choices[0].message.content if jawaban.choices else None
-        if not isi_jawaban:
-            alasan = jawaban.choices[0].finish_reason if jawaban.choices else "tidak ada choices"
-            logger.warning("Jawaban AI kosong (percobaan 1). finish_reason=%s, model=%s", alasan, jawaban.model)
-
-            # Retry sekali dengan token lebih besar - biasanya kejadian di TEXT_MODEL (gpt-oss-120b)
-            # yang reasoning tokennya ikut makan max_tokens, jadi kadang jawaban akhir ga sempat ditulis.
-            if gambar_attachment is None:
-                try:
-                    jawaban_retry = ai.chat.completions.create(
-                        model=TEXT_MODEL,
-                        messages=[
-                            {"role": "system", "content": system_lengkap},
-                            {"role": "user", "content": pertanyaan_dengan_username},
-                        ],
-                        temperature=0.7,
-                        max_tokens=1400,
-                        reasoning_effort="low",
-                    )
-                    isi_retry = jawaban_retry.choices[0].message.content if jawaban_retry.choices else None
-                    if isi_retry:
-                        isi_jawaban = isi_retry
-                    else:
-                        logger.warning(
-                            "Jawaban AI tetap kosong (percobaan 2). finish_reason=%s",
-                            jawaban_retry.choices[0].finish_reason if jawaban_retry.choices else "tidak ada choices",
-                        )
-                except Exception:
-                    logger.error("Retry gagal:\n%s", traceback.format_exc())
-        await kirim_balasan(message, isi_jawaban)
-
-    except RateLimitError:
-        logger.warning("Kena rate limit Groq.")
-        await kirim_balasan(message, "Lagi banyak yang chat bang, bentar lagi ya, kena limit dulu nih. 🗿")
-    except (APITimeoutError, APIConnectionError) as e:
-        logger.error("Groq timeout/connection error: %s", e)
-        await kirim_balasan(message, "Koneksi ke otak AI-nya lagi lemot/putus, coba lagi bentar ya. 🥲")
-    except APIError as e:
-        logger.error("Groq API error: %s", e)
-        await kirim_balasan(message, "AI-nya lagi error di server, coba lagi nanti ya bang.")
-    except Exception:
-        # log traceback LENGKAP ke console, biar ketauan akar masalahnya
-        logger.error("Error tak terduga di on_message:\n%s", traceback.format_exc())
-        await kirim_balasan(message, "Ups, ada error di sistemku. Udah dicatat, coba tanya ulang ya. 🙏")
-
-
-@bot.event
-async def on_error(event, *args, **kwargs):
-    logger.error("Error di event %s:\n%s", event, traceback.format_exc())
-
-
-bot.run(TOKEN)
-    
+        elif perintah =
