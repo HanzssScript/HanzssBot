@@ -69,9 +69,36 @@ Gunakan emot hanya 1-2 per pesan, jangan berlebihan, biar rapi.
 Jangan garing atau ga nyambung.
 
 ATURAN BAHASA (SANGAT PENTING, PRIORITAS UTAMA):
-- Selalu deteksi bahasa yang dipakai pengguna di pesan terakhirnya, lalu balas menggunakan BAHASA YANG SAMA PERSIS.
-- Ini berlaku untuk SEMUA bahasa di dunia: Inggris, Spanyol, Prancis, Jerman, Portugis, Italia, Belanda, Rusia,
-  Arab, Turki, Mandarin, Jepang, Korea, Hindi, Vietnam, Thailand, Tagalog/Filipino, Melayu, dan bahasa lainnya.
+- Selalu deteksi bahasa yang dipakai pengguna di pesan terakhirnya, lalu balas menggunakan BAHASA YANG SAMA PERSIS,
+  termasuk dialek/variannya kalau bisa (misal Inggris British vs Inggris Amerika, Mandarin Sederhana vs Tradisional).
+- ATURAN INI TIDAK DIBATASI HANYA PADA DAFTAR DI BAWAH. Daftar di bawah cuma contoh supaya kamu ingat cakupannya
+  seluas bahasa-bahasa yang didukung Google Translate (240+ bahasa). Kalau ada bahasa yang tidak disebut di daftar
+  ini tapi kamu tetap mengenalinya, TETAP balas pakai bahasa tersebut, jangan dialihkan ke Bahasa Indonesia/Inggris.
+- Daftar lengkap ~243 bahasa (setara seluruh bahasa yang didukung Google Translate per pembaruan 2024) yang
+  WAJIB kamu kenali dan bisa dipakai untuk membalas kalau itu bahasa pesan pengguna:
+  Afrikaans, Albania, Amharik, Arab (Standar/Mesir/Teluk/Maroko), Armenia, Assam, Aymara, Azerbaijan, Bambara,
+  Basque, Belarusia, Bengali, Bhojpuri, Bosnia, Bulgaria, Myanmar/Burma, Catalan, Cebuano, Chichewa,
+  Mandarin (Sederhana), Mandarin (Tradisional), Korsika, Kroasia, Ceko, Denmark, Dhivehi, Dogri, Belanda,
+  Inggris (Amerika/Britania/Australia/Kanada/India), Esperanto, Estonia, Ewe, Filipino/Tagalog, Finlandia,
+  Prancis (Prancis/Kanada), Frisia, Galisia, Georgia, Jerman, Yunani, Guarani, Gujarati, Kreol Haiti, Hausa,
+  Hawaii, Ibrani, Hindi, Hmong, Hungaria, Islandia, Ilocano, Igbo, Indonesia, Irlandia, Italia, Jepang, Jawa,
+  Kannada, Kazakh, Khmer, Kinyarwanda, Konkani, Korea, Krio, Kurdi (Kurmanji), Kurdi (Sorani), Kirgistan, Lao,
+  Latin, Latvia, Lingala, Lituania, Luganda, Luksemburg, Makedonia, Maithili, Malagasi, Melayu, Malayalam,
+  Malta, Maori, Marathi, Meitei/Manipuri, Mongolia, Nepali, Norwegia (Bokmal), Odia, Oromo, Pashto,
+  Persia/Farsi, Polandia, Portugis (Portugal & Brazil), Punjabi, Quechua, Rumania, Rusia, Samoa, Sanskerta,
+  Skotlandia Gaelik, Sepedi, Serbia, Shona, Sindhi, Sinhala, Slowakia, Slovenia, Somalia, Sesotho, Spanyol
+  (Spanyol & Amerika Latin), Sunda, Swahili, Swedia, Tajik, Tamil, Tatar, Telugu, Thailand, Tigrinya, Tsonga,
+  Turki, Turkmen, Twi, Ukraina, Urdu, Uighur, Uzbek, Vietnam, Wales, Xhosa, Yiddish, Yoruba, Zulu,
+  Afar, Kanton/Cantonese, Manx, NKo, Punjabi (Shahmukhi), Tamazight/Amazigh (Latin & Tifinagh), Tok Pisin,
+  Marwadi, Fon, Ga, Luo, Kikongo, Swati, Venda, Wolof, Abkhaz, Aceh, Acholi, Alur, Avar, Awadhi, Bali, Bashkir,
+  Baluchi, Batak Karo, Batak Simalungun, Batak Toba, Bemba, Betawi, Bikol, Breton, Buryat, Chamorro, Chechen,
+  Chuuk, Chuvash, Tatar Krimea, Dari, Dinka, Dombe, Dyula, Dzongkha, Faroe, Fiji, Friuli, Fulani, Hakha Chin,
+  Hiligaynon, Hunsrik, Iban, Patois Jamaika, Jingpo, Kalaallisut/Greenland, Kanuri, Kapampangan, Khasi, Kiga,
+  Kituba, Kokborok, Komi, Latgalia, Liguria, Limburg, Lombard, Madura, Makassar, Makhuwa, Mam, Kepulauan
+  Marshall, Kreol Mauritius, Mari Padang, Minang, Nahuatl, Ndau, Ndebele, Newari/Nepal Bhasa, Nuer, Occitan,
+  Ossetia, Pangasinan, Papiamento, Portugis Eropa, Q'eqchi', Romani, Rundi, Sami, Sango, Santali, Kreol
+  Seychelles, Shan, Sisilia, Susu, Tahiti, Tetum, Tibet, Tiv, Tonga, Tswana, Tulu, Tumbuka, Tuva, Udmurt,
+  Venesia, Waray, Yakut, Maya Yucatec, Zapotec.
 - Jangan pernah membalas pakai Bahasa Indonesia kalau pengguna menulis pakai bahasa lain, kecuali dia memang
   menulis dalam Bahasa Indonesia.
 - Kalau pesan pengguna campuran beberapa bahasa, ikuti bahasa yang paling dominan di pesan tersebut.
@@ -345,4 +372,3 @@ async def on_error(event, *args, **kwargs):
 
 
 bot.run(TOKEN)
-    
