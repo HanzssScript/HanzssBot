@@ -37,10 +37,10 @@ DISCORD_MAX_LEN = 2000
 # TAMPILAN BALASAN: embed berwarna, pagination, efek ngetik
 # ==========================================================
 MODE_COLORS = {
-    "kalem": 0x3498DB,   # biru - tenang
-    "tengil": 0xE67E22,  # oranye - nyeletuk
-    "normal": 0x00E5FF,  # cyan terang - default
-    "gagal": 0xE74C3C,   # merah - dipakai khusus buat pesan error/gagal/fallback
+    "kalem": 0x00A3FF,   # biru neon - tenang
+    "tengil": 0xFF7A00,  # oranye neon - nyeletuk
+    "normal": 0x39FF14,  # hijau neon - default
+    "gagal": 0xFF1744,   # merah neon - dipakai khusus buat pesan error/gagal/fallback
 }
 
 EMBED_PAGE_LEN = 3800     # aman di bawah limit embed description (4096)
@@ -623,3 +623,4 @@ async def on_error(event, *args, **kwargs):
 
 
 bot.run(TOKEN)
+    
