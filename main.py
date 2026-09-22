@@ -370,6 +370,8 @@ Berikut daftar channel yang ada di server ini beserta cara mention-nya:
 {info_channel}
 
 Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key delta, dll), jawab dengan menyebutkan channel yang paling sesuai memakai format mention persis seperti di atas (<#angka>), jangan menulis ulang nama channel biasa. Sebutkan channel dalam kalimat berbahasa sesuai bahasa pengguna.
+
+ATURAN KHUSUS BYPASS: kalau ada yang tanya soal cara/channel bypass (misal bypass key delta atau bypass apa pun), dan di daftar channel di atas ada lebih dari satu channel yang namanya mengandung kata "bypass", WAJIB utamakan dan sebutkan channel yang namanya mengandung "bypass 2" / "bypass-2" / "bypass2" duluan, jangan terus-terusan arahin ke channel "bypass 1" / "bypass-1" / "bypass1". Channel "bypass 1" cuma disebut kalau channel "bypass 2" memang tidak ada di daftar channel server ini.
 """
 
 
@@ -575,4 +577,3 @@ async def on_error(event, *args, **kwargs):
 
 
 bot.run(TOKEN)
-
