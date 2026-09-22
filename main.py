@@ -39,7 +39,8 @@ DISCORD_MAX_LEN = 2000
 MODE_COLORS = {
     "kalem": 0x3498DB,   # biru - tenang
     "tengil": 0xE67E22,  # oranye - nyeletuk
-    "normal": 0x2ECC71,  # hijau - default
+    "normal": 0x00E5FF,  # cyan terang - default
+    "gagal": 0xE74C3C,   # merah - dipakai khusus buat pesan error/gagal/fallback
 }
 
 EMBED_PAGE_LEN = 3800     # aman di bawah limit embed description (4096)
@@ -196,13 +197,14 @@ class PaginatorView(discord.ui.View):
             item.disabled = True
 
 
-async def kirim_balasan(message, teks, mode_name="normal"):
-    """Kirim balasan sebagai embed berwarna sesuai mode, dengan efek ngetik bertahap
-    di halaman pertama, dan tombol pagination kalau jawabannya kepanjangan."""
+async def kirim_balasan(message, teks, mode_name="normal", gagal=False):
+    """Kirim balasan sebagai embed berwarna. Warna ikut mode aktif kalau sukses,
+    tapi otomatis MERAH kalau ini pesan gagal/error/fallback (gagal=True atau teks kosong)."""
     if not teks:
         teks = "Hmm, aku ga dapet jawaban dari AI-nya bang, coba tanya ulang ya. 😅"
+        gagal = True
 
-    warna = MODE_COLORS.get(mode_name, MODE_COLORS["normal"])
+    warna = MODE_COLORS["gagal"] if gagal else MODE_COLORS.get(mode_name, MODE_COLORS["normal"])
     halaman_teks = [teks[i:i + EMBED_PAGE_LEN] for i in range(0, len(teks), EMBED_PAGE_LEN)] or [teks]
     total_halaman = len(halaman_teks)
 
@@ -369,7 +371,7 @@ def build_system_prompt(guild, guild_id):
 Berikut daftar channel yang ada di server ini beserta cara mention-nya:
 {info_channel}
 
-Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key delta, dll), jawab dengan menyebutkan channel yang paling sesuai memakai format mention persis seperti di atas (<#angka>), jangan menulis ulang nama channel biasa. Sebutkan channel dalam kalimat berbahasa sesuai bahasa pengguna.
+Kalau ada yang bertanya di mana channel tertentu (misalnya tutorial, bypass key delta, dll), jawab dengan menyebutkan channel yang paling sesuai. JANGAN PERNAH menulis format mention <#angka> sendiri (kamu sering salah nulis ID-nya dan bikin "Unknown Channel"). Sebagai gantinya, WAJIB tulis persis dalam format placeholder {{{{channel:Nama Channel}}}} sesuai nama yang ada di daftar channel di atas (nama channel-nya harus sama persis termasuk emoji/simbolnya) - nanti sistem yang otomatis ubah placeholder itu jadi mention channel asli yang valid. Sebutkan channel dalam kalimat berbahasa sesuai bahasa pengguna.
 
 ATURAN KHUSUS BYPASS: kalau ada yang tanya soal cara/channel bypass (misal bypass key delta atau bypass apa pun), dan di daftar channel di atas ada lebih dari satu channel yang namanya mengandung kata "bypass", WAJIB utamakan dan sebutkan channel yang namanya mengandung "bypass 2" / "bypass-2" / "bypass2" duluan, jangan terus-terusan arahin ke channel "bypass 1" / "bypass-1" / "bypass1". Channel "bypass 1" cuma disebut kalau channel "bypass 2" memang tidak ada di daftar channel server ini.
 """
@@ -402,9 +404,51 @@ OCR_KEYWORDS = [
 
 def daftar_channel(guild):
     daftar = []
-    for ch in guild.text_channels:
-        daftar.append(f"- {ch.name} : <#{ch.id}>")
+    for ch in guild.channels:
+        if isinstance(ch, discord.CategoryChannel):
+            continue
+        nama = getattr(ch, "name", None)
+        if not nama:
+            continue
+        daftar.append(f"- {nama} -> tulis sebagai {{{{channel:{nama}}}}}")
     return "\n".join(daftar)
+
+
+CHANNEL_PLACEHOLDER_REGEX = re.compile(r"\{\{channel:([^{}]+)\}\}")
+
+
+def ganti_placeholder_channel(teks, guild):
+    """Ganti semua placeholder {{channel:Nama Channel}} di jawaban AI jadi mention channel
+    ASLI (<#id>) dengan ID yang diambil langsung dari server - dijamin valid, ga akan pernah
+    'Unknown Channel'. Kalau nama channel-nya ga ketemu di server, placeholder-nya diganti
+    jadi teks nama channel biasa (bukan error)."""
+    if not teks or "{{channel:" not in teks or guild is None:
+        return teks
+
+    def _cari_channel(nama_dicari):
+        nama_dicari_lower = nama_dicari.strip().lower()
+        for ch in guild.channels:
+            if isinstance(ch, discord.CategoryChannel):
+                continue
+            if getattr(ch, "name", "").lower() == nama_dicari_lower:
+                return ch
+        # fallback: cocokkan sebagian (jaga-jaga AI nulis namanya agak meleset dikit)
+        for ch in guild.channels:
+            if isinstance(ch, discord.CategoryChannel):
+                continue
+            nama_ch = getattr(ch, "name", "").lower()
+            if nama_ch and (nama_dicari_lower in nama_ch or nama_ch in nama_dicari_lower):
+                return ch
+        return None
+
+    def _replace(match):
+        nama_dicari = match.group(1)
+        channel = _cari_channel(nama_dicari)
+        if channel is not None:
+            return f"<#{channel.id}>"
+        return f"#{nama_dicari.strip()}"
+
+    return CHANNEL_PLACEHOLDER_REGEX.sub(_replace, teks)
 
 
 def minta_ocr(teks):
@@ -554,21 +598,23 @@ async def on_message(message):
                         )
                 except Exception:
                     logger.error("Retry gagal:\n%s", traceback.format_exc())
+
+        isi_jawaban = ganti_placeholder_channel(isi_jawaban, message.guild)
         await kirim_balasan(message, isi_jawaban, get_mode_name(guild_id))
 
     except RateLimitError:
         logger.warning("Kena rate limit Groq.")
-        await kirim_balasan(message, "Lagi banyak yang chat bang, bentar lagi ya, kena limit dulu nih. 🗿", get_mode_name(guild_id))
+        await kirim_balasan(message, "Lagi banyak yang chat bang, bentar lagi ya, kena limit dulu nih. 🗿", get_mode_name(guild_id), gagal=True)
     except (APITimeoutError, APIConnectionError) as e:
         logger.error("Groq timeout/connection error: %s", e)
-        await kirim_balasan(message, "Koneksi ke otak AI-nya lagi lemot/putus, coba lagi bentar ya. 🥲", get_mode_name(guild_id))
+        await kirim_balasan(message, "Koneksi ke otak AI-nya lagi lemot/putus, coba lagi bentar ya. 🥲", get_mode_name(guild_id), gagal=True)
     except APIError as e:
         logger.error("Groq API error: %s", e)
-        await kirim_balasan(message, "AI-nya lagi error di server, coba lagi nanti ya bang.", get_mode_name(guild_id))
+        await kirim_balasan(message, "AI-nya lagi error di server, coba lagi nanti ya bang.", get_mode_name(guild_id), gagal=True)
     except Exception:
         # log traceback LENGKAP ke console, biar ketauan akar masalahnya
         logger.error("Error tak terduga di on_message:\n%s", traceback.format_exc())
-        await kirim_balasan(message, "Ups, ada error di sistemku. Udah dicatat, coba tanya ulang ya. 🙏", get_mode_name(guild_id))
+        await kirim_balasan(message, "Ups, ada error di sistemku. Udah dicatat, coba tanya ulang ya. 🙏", get_mode_name(guild_id), gagal=True)
 
 
 @bot.event
