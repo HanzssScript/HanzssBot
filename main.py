@@ -43,9 +43,6 @@ MODE_COLORS = {
 }
 
 EMBED_PAGE_LEN = 3800     # aman di bawah limit embed description (4096)
-TYPING_STEPS_MAX = 8      # jumlah langkah "ketikan" (dibatasi biar ga kena rate limit edit)
-TYPING_DELAY = 0.35       # jeda antar langkah (detik)
-TYPING_MIN_LEN = 40       # di bawah panjang ini, efek ngetik dilewati (percuma)
 
 # --- Link preview (embed links) ---
 URL_REGEX = re.compile(r'https?://[^\s<>"\')\]]+')
@@ -217,29 +214,10 @@ async def kirim_balasan(message, teks, mode_name="normal"):
         return embed
 
     try:
-        konten_pertama = halaman_teks[0]
-
-        # Mulai fetch metadata link (kalau ada URL di jawaban) BARENGAN sama animasi ngetik,
-        # biar ga nambah waktu tunggu ekstra.
-        tugas_link = asyncio.create_task(buat_semua_embed_link(teks))
-
-        # --- kirim awal (kosong/kursor) lalu animasikan efek ngetik ---
-        sent = await message.reply(embeds=[buat_embed(0, "▌")])
-
-        if len(konten_pertama) >= TYPING_MIN_LEN:
-            panjang = len(konten_pertama)
-            jumlah_langkah = min(TYPING_STEPS_MAX, max(2, panjang // 20))
-            ukuran_langkah = max(1, panjang // jumlah_langkah)
-            for i in range(ukuran_langkah, panjang, ukuran_langkah):
-                try:
-                    await sent.edit(embeds=[buat_embed(0, konten_pertama[:i] + "▌")])
-                except discord.HTTPException:
-                    break
-                await asyncio.sleep(TYPING_DELAY)
-
-        # Tunggu hasil fetch link (kalau belum selesai), maks LINK_FETCH_TIMEOUT detik lagi
+        # Fetch metadata link (kalau ada URL di jawaban) sebelum kirim, biar link card
+        # langsung nempel di pesan pertama tanpa perlu ada pesan menyusul.
         try:
-            embed_link = await tugas_link
+            embed_link = await buat_semua_embed_link(teks)
         except Exception:
             embed_link = []
 
@@ -252,7 +230,7 @@ async def kirim_balasan(message, teks, mode_name="normal"):
             semua_halaman.append(embeds_halaman)
 
         view = PaginatorView(semua_halaman, author_id=message.author.id) if total_halaman > 1 else None
-        await sent.edit(embeds=semua_halaman[0], view=view)
+        await message.reply(embeds=semua_halaman[0], view=view)
 
     except discord.Forbidden:
         logger.error("Ga punya izin reply/send di channel %s", message.channel)
@@ -597,4 +575,4 @@ async def on_error(event, *args, **kwargs):
 
 
 bot.run(TOKEN)
-    
+
