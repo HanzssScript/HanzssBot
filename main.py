@@ -470,4 +470,131 @@ async def on_message(message):
             mode["kalem"] = True
             mode["tengil"] = False
             await message.reply("Baik, mode kalem sudah aktif. Saya akan berbicara dengan sopan dan santun kepada semua pengguna. 🙏")
-        elif perintah =
+        elif perintah = "kalem off":
+            mode["kalem"] = False
+            await message.reply("Mode kalem sudah dimatikan. 🙂")
+        elif perintah == "tengil on":
+            mode["tengil"] = True
+            mode["kalem"] = False
+            await message.reply("Gas, mode tengil nyala bang, tapi tetap santun ya wkwk 🗿")
+        elif perintah == "tengil off":
+            mode["tengil"] = False
+            await message.reply("Siap, mode tengil dimatikan. 🙂")
+        return
+
+    # ------------------------------------------------------
+    # Cek gambar (untuk fitur OCR / analisis gambar)
+    # ------------------------------------------------------
+    gambar_attachment = None
+    for att in message.attachments:
+        if att.content_type and att.content_type.startswith("image/"):
+            gambar_attachment = att
+            break
+
+    if pertanyaan == "" and gambar_attachment is None:
+        return
+
+    try:
+        await message.channel.typing()
+
+        system_lengkap = build_system_prompt(message.guild, guild_id)
+        pertanyaan_dengan_username = f"[username: {message.author.name}] {pertanyaan}"
+
+        if gambar_attachment is not None:
+            # Ada gambar terlampir -> pakai model vision
+            image_bytes = await gambar_attachment.read()
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            mime_type = gambar_attachment.content_type
+
+            if minta_ocr(pertanyaan) or pertanyaan == "":
+                instruksi_gambar = (
+                    "Tolong ambil dan tuliskan ulang semua teks yang ada di gambar ini "
+                    "persis seperti aslinya, tanpa tambahan komentar lain kecuali diminta. "
+                    "Jika ada instruksi tambahan dari pengguna, ikuti bahasa instruksi tersebut untuk komentar apa pun."
+                )
+            else:
+                instruksi_gambar = pertanyaan
+
+            jawaban = ai.chat.completions.create(
+                model=VISION_MODEL,
+                messages=[
+                    {"role": "system", "content": system_lengkap},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"[username: {message.author.name}] {instruksi_gambar}"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime_type};base64,{image_b64}"},
+                            },
+                        ],
+                    },
+                ],
+                temperature=0.6,
+                max_tokens=700,
+            )
+        else:
+            jawaban = ai.chat.completions.create(
+                model=TEXT_MODEL,
+                messages=[
+                    {"role": "system", "content": system_lengkap},
+                    {"role": "user", "content": pertanyaan_dengan_username},
+                ],
+                temperature=0.7,
+                max_tokens=900,
+                reasoning_effort="low",
+            )
+
+        isi_jawaban = jawaban.choices[0].message.content if jawaban.choices else None
+        if not isi_jawaban:
+            alasan = jawaban.choices[0].finish_reason if jawaban.choices else "tidak ada choices"
+            logger.warning("Jawaban AI kosong (percobaan 1). finish_reason=%s, model=%s", alasan, jawaban.model)
+
+            # Retry sekali dengan token lebih besar - biasanya kejadian di TEXT_MODEL (gpt-oss-120b)
+            # yang reasoning tokennya ikut makan max_tokens, jadi kadang jawaban akhir ga sempat ditulis.
+            if gambar_attachment is None:
+                try:
+                    jawaban_retry = ai.chat.completions.create(
+                        model=TEXT_MODEL,
+                        messages=[
+                            {"role": "system", "content": system_lengkap},
+                            {"role": "user", "content": pertanyaan_dengan_username},
+                        ],
+                        temperature=0.7,
+                        max_tokens=1400,
+                        reasoning_effort="low",
+                    )
+                    isi_retry = jawaban_retry.choices[0].message.content if jawaban_retry.choices else None
+                    if isi_retry:
+                        isi_jawaban = isi_retry
+                    else:
+                        logger.warning(
+                            "Jawaban AI tetap kosong (percobaan 2). finish_reason=%s",
+                            jawaban_retry.choices[0].finish_reason if jawaban_retry.choices else "tidak ada choices",
+                        )
+                except Exception:
+                    logger.error("Retry gagal:\n%s", traceback.format_exc())
+        await kirim_balasan(message, isi_jawaban, get_mode_name(guild_id))
+
+    except RateLimitError:
+        logger.warning("Kena rate limit Groq.")
+        await kirim_balasan(message, "Lagi banyak yang chat bang, bentar lagi ya, kena limit dulu nih. 🗿", get_mode_name(guild_id))
+    except (APITimeoutError, APIConnectionError) as e:
+        logger.error("Groq timeout/connection error: %s", e)
+        await kirim_balasan(message, "Koneksi ke otak AI-nya lagi lemot/putus, coba lagi bentar ya. 🥲", get_mode_name(guild_id))
+    except APIError as e:
+        logger.error("Groq API error: %s", e)
+        await kirim_balasan(message, "AI-nya lagi error di server, coba lagi nanti ya bang.", get_mode_name(guild_id))
+    except Exception:
+        # log traceback LENGKAP ke console, biar ketauan akar masalahnya
+        logger.error("Error tak terduga di on_message:\n%s", traceback.format_exc())
+        await kirim_balasan(message, "Ups, ada error di sistemku. Udah dicatat, coba tanya ulang ya. 🙏", get_mode_name(guild_id))
+
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    logger.error("Error di event %s:\n%s", event, traceback.format_exc())
+
+
+bot.run(TOKEN)
+    
