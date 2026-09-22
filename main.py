@@ -470,7 +470,7 @@ async def on_message(message):
             mode["kalem"] = True
             mode["tengil"] = False
             await message.reply("Baik, mode kalem sudah aktif. Saya akan berbicara dengan sopan dan santun kepada semua pengguna. 🙏")
-        elif perintah = "kalem off":
+        elif perintah == "kalem off":
             mode["kalem"] = False
             await message.reply("Mode kalem sudah dimatikan. 🙂")
         elif perintah == "tengil on":
